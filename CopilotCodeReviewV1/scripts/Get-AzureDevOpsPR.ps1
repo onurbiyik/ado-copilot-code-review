@@ -656,6 +656,14 @@ if ($script:OutputToFile) {
         }
         $script:OutputBuilder.ToString() | Out-File -FilePath $OutputFile -Encoding UTF8
         Write-Host "`nOutput written to: $OutputFile" -ForegroundColor Green
+
+        # Write linked work item IDs to a separate file for downstream consumption
+        if ($workItems -and $workItems.value -and $workItems.value.Count -gt 0) {
+            $workItemIds = ($workItems.value | ForEach-Object { $_.id }) -join ","
+            $workItemIdsFile = Join-Path $outputDir "Work_Item_Ids.txt"
+            $workItemIds | Out-File -FilePath $workItemIdsFile -Encoding UTF8 -NoNewline
+            Write-Host "Work Item IDs written to: $workItemIdsFile" -ForegroundColor Green
+        }
     }
     catch {
         Write-Error "Failed to write output file: $_"

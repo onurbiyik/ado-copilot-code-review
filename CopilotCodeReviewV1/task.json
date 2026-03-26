@@ -140,6 +140,14 @@
             "required": false,
             "defaultValue": "",
             "helpMarkDown": "Optional. A comma-separated list of email addresses. If specified, the task will only run code reviews for PRs authored by users with matching email addresses. Uses $(Build.RequestedForEmail) for comparison."
+        },
+        {
+            "name": "includeWorkItems",
+            "type": "boolean",
+            "label": "Include Work Item Details",
+            "required": false,
+            "defaultValue": true,
+            "helpMarkDown": "When enabled, fetches full details (title, description, acceptance criteria, repro steps) for work items linked to the pull request and includes them as context for the Copilot review. Disable to reduce API calls and context window usage."
         }
     ],
     "execution": {

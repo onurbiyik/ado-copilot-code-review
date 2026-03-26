@@ -151,6 +151,7 @@ async function run(): Promise<void> {
         const prompt = tl.getInput('prompt');
         const promptRaw = tl.getInput('promptRaw');
         const promptFileRaw = tl.getInput('promptFileRaw');
+        const includeWorkItems = tl.getBoolInput('includeWorkItems', false);
 
         // If PR ID not provided, try to get from pipeline variable
         if (!pullRequestId) {
@@ -188,7 +189,7 @@ async function run(): Promise<void> {
         const workingDirectory = tl.getVariable('System.DefaultWorkingDirectory') || process.cwd();
 
         // Step 1: Install GitHub Copilot CLI if not present
-        console.log('\n[Step 1/4] Checking GitHub Copilot CLI installation...');
+        console.log('\n[Step 1/5] Checking GitHub Copilot CLI installation...');
         const copilotInstalled = await checkCopilotCli();
         if (!copilotInstalled) {
             console.log('GitHub Copilot CLI not found. Installing...');
@@ -198,7 +199,7 @@ async function run(): Promise<void> {
         }
 
         // Step 2: Fetch PR details
-        console.log('\n[Step 2/4] Fetching pull request details...');
+        console.log('\n[Step 2/5] Fetching pull request details...');
         const prDetailsScript = path.join(scriptsDir, 'Get-AzureDevOpsPR.ps1');
         const prDetailsOutput = path.join(workingDirectory, 'PR_Details.txt');
         
@@ -214,7 +215,7 @@ async function run(): Promise<void> {
         console.log(`PR details saved to: ${prDetailsOutput}`);
 
         // Step 3: Fetch PR changes (iteration details)
-        console.log('\n[Step 3/4] Fetching pull request changes...');
+        console.log('\n[Step 3/5] Fetching pull request changes...');
         const prChangesScript = path.join(scriptsDir, 'Get-AzureDevOpsPRChanges.ps1');
         const iterationDetailsOutput = path.join(workingDirectory, 'Iteration_Details.txt');
         
@@ -239,8 +240,44 @@ async function run(): Promise<void> {
             }
         }
 
-        // Step 4: Run Copilot CLI for code review
-        console.log('\n[Step 4/4] Running Copilot code review...');
+        // Step 4: Fetch linked work item details (optional)
+        if (includeWorkItems) {
+            console.log('\n[Step 4/5] Fetching linked work item details...');
+            const workItemIdsFile = path.join(workingDirectory, 'Work_Item_Ids.txt');
+
+            if (fs.existsSync(workItemIdsFile)) {
+                const workItemIds = fs.readFileSync(workItemIdsFile, 'utf8').trim();
+
+                if (workItemIds) {
+                    const workItemsScript = path.join(scriptsDir, 'Get-AzureDevOpsWorkItems.ps1');
+                    const workItemDetailsOutput = path.join(workingDirectory, 'Work_Item_Details.txt');
+
+                    try {
+                        await runPowerShellScript(workItemsScript, [
+                            `-Token "${azureDevOpsToken}"`,
+                            `-AuthType "${azureDevOpsAuthType}"`,
+                            `-CollectionUri "${resolvedCollectionUri}"`,
+                            `-Project "${project}"`,
+                            `-WorkItemIds "${workItemIds}"`,
+                            `-OutputFile "${workItemDetailsOutput}"`
+                        ]);
+                        console.log(`Work item details saved to: ${workItemDetailsOutput}`);
+                    } catch (err) {
+                        console.log('Warning: Failed to fetch work item details. Continuing without work item context.');
+                        console.log(`Error: ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                } else {
+                    console.log('No linked work item IDs found. Skipping work item detail fetch.');
+                }
+            } else {
+                console.log('No linked work items for this PR. Skipping work item detail fetch.');
+            }
+        } else {
+            console.log('\n[Step 4/5] Skipping work item details (disabled).');
+        }
+
+        // Step 5: Run Copilot CLI for code review
+        console.log('\n[Step 5/5] Running Copilot code review...');
         
         // Determine the prompt file to use
         let promptFilePath: string = '';
