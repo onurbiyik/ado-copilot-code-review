@@ -646,7 +646,9 @@ async function runClaudeCodeCli(
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         // Build Claude Code CLI command for headless CI/CD operation
+        // Use stream-json output with PowerShell parsing for real-time log streaming
         let claudeCmd = `claude -p "$prompt" --dangerously-skip-permissions`;
+        claudeCmd += ` --output-format stream-json --verbose --include-partial-messages`;
         claudeCmd += ` --allowedTools "Bash" "Read" "Write" "Edit" "Glob" "Grep"`;
         claudeCmd += ` --disallowedTools "Bash(git push *)"`;
 
@@ -660,11 +662,14 @@ async function runClaudeCodeCli(
             claudeCmd += ` --max-budget-usd ${maxBudget}`;
         }
 
+        // PowerShell pipeline: stream JSON from Claude Code and extract text deltas in real time
+        const streamParser = `${claudeCmd} | ForEach-Object { try { $ev = $_ | ConvertFrom-Json -ErrorAction Stop; if ($ev.type -eq 'stream_event' -and $ev.event.delta.type -eq 'text_delta') { Write-Host $ev.event.delta.text } } catch { Write-Host $_ } }; Write-Host ''; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`;
+
         const printPrompt = `Write-Host ========== START PROMPT ==========; Write-Host $prompt; Write-Host ========== END PROMPT ==========;`;
         const envRefresh = isWindows()
             ? `$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User");`
             : '';
-        const psCommand = `${envRefresh} $prompt = Get-Content -Path '${promptFilePath}' -Raw; ${printPrompt} ${claudeCmd}`;
+        const psCommand = `${envRefresh} $prompt = Get-Content -Path '${promptFilePath}' -Raw; ${printPrompt} ${streamParser}`;
         console.log(`Running PowerShell: ${psCommand}`);
 
         const envVars = { ...process.env };
