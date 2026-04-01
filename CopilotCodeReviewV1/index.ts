@@ -67,9 +67,28 @@ async function run(): Promise<void> {
             console.log('='.repeat(60));
         }
 
-        // Get required inputs
-        const githubPat = tl.getInputRequired('githubPat');
-        
+        // Get agent selection and auth inputs
+        const useClaudeCode = tl.getBoolInput('useClaudeCode', false);
+        const githubPat = tl.getInput('githubPat');
+        const anthropicApiKey = tl.getInput('anthropicApiKey');
+        const maxTurns = tl.getInput('maxTurns');
+        const maxBudget = tl.getInput('maxBudget');
+
+        // Validate agent-specific auth
+        if (useClaudeCode) {
+            if (!anthropicApiKey) {
+                tl.setResult(tl.TaskResult.Failed,
+                    'Anthropic API Key is required when using Claude Code CLI. Please provide the anthropicApiKey input.');
+                return;
+            }
+        } else {
+            if (!githubPat) {
+                tl.setResult(tl.TaskResult.Failed,
+                    'GitHub PAT is required when using GitHub Copilot CLI. Please provide the githubPat input.');
+                return;
+            }
+        }
+
         // Get Azure DevOps authentication settings
         const useSystemAccessToken = tl.getBoolInput('useSystemAccessToken', false);
         const azureDevOpsPat = tl.getInput('azureDevOpsPat');
@@ -151,6 +170,7 @@ async function run(): Promise<void> {
         const prompt = tl.getInput('prompt');
         const promptRaw = tl.getInput('promptRaw');
         const promptFileRaw = tl.getInput('promptFileRaw');
+        const includeWorkItems = tl.getBoolInput('includeWorkItems', false);
 
         // If PR ID not provided, try to get from pipeline variable
         if (!pullRequestId) {
@@ -162,9 +182,11 @@ async function run(): Promise<void> {
             return;
         }
 
+        const agentName = useClaudeCode ? 'Claude Code' : 'Copilot';
         console.log('='.repeat(60));
-        console.log('Copilot Code Review Task');
+        console.log(`${agentName} Code Review Task`);
         console.log('='.repeat(60));
+        console.log(`Agent: ${agentName}`);
         console.log(`Collection URI: ${resolvedCollectionUri}`);
         console.log(`Project: ${project}`);
         console.log(`Repository: ${repository}`);
@@ -176,7 +198,11 @@ async function run(): Promise<void> {
         console.log('='.repeat(60));
 
         // Set environment variables for PowerShell scripts
-        process.env['GH_TOKEN'] = githubPat;
+        if (useClaudeCode) {
+            process.env['ANTHROPIC_API_KEY'] = anthropicApiKey!;
+        } else {
+            process.env['GH_TOKEN'] = githubPat!;
+        }
         process.env['AZUREDEVOPS_TOKEN'] = azureDevOpsToken;
         process.env['AZUREDEVOPS_AUTH_TYPE'] = azureDevOpsAuthType;
         process.env['AZUREDEVOPS_COLLECTION_URI'] = resolvedCollectionUri;
@@ -187,18 +213,29 @@ async function run(): Promise<void> {
         const scriptsDir = path.join(__dirname, 'scripts');
         const workingDirectory = tl.getVariable('System.DefaultWorkingDirectory') || process.cwd();
 
-        // Step 1: Install GitHub Copilot CLI if not present
-        console.log('\n[Step 1/4] Checking GitHub Copilot CLI installation...');
-        const copilotInstalled = await checkCopilotCli();
-        if (!copilotInstalled) {
-            console.log('GitHub Copilot CLI not found. Installing...');
-            await installCopilotCli();
+        // Step 1: Install CLI agent if not present
+        if (useClaudeCode) {
+            console.log('\n[Step 1/5] Checking Claude Code CLI installation...');
+            const claudeInstalled = await checkClaudeCodeCli();
+            if (!claudeInstalled) {
+                console.log('Claude Code CLI not found. Installing...');
+                await installClaudeCodeCli();
+            } else {
+                console.log('Claude Code CLI is already installed.');
+            }
         } else {
-            console.log('GitHub Copilot CLI is already installed.');
+            console.log('\n[Step 1/5] Checking GitHub Copilot CLI installation...');
+            const copilotInstalled = await checkCopilotCli();
+            if (!copilotInstalled) {
+                console.log('GitHub Copilot CLI not found. Installing...');
+                await installCopilotCli();
+            } else {
+                console.log('GitHub Copilot CLI is already installed.');
+            }
         }
 
         // Step 2: Fetch PR details
-        console.log('\n[Step 2/4] Fetching pull request details...');
+        console.log('\n[Step 2/5] Fetching pull request details...');
         const prDetailsScript = path.join(scriptsDir, 'Get-AzureDevOpsPR.ps1');
         const prDetailsOutput = path.join(workingDirectory, 'PR_Details.txt');
         
@@ -214,7 +251,7 @@ async function run(): Promise<void> {
         console.log(`PR details saved to: ${prDetailsOutput}`);
 
         // Step 3: Fetch PR changes (iteration details)
-        console.log('\n[Step 3/4] Fetching pull request changes...');
+        console.log('\n[Step 3/5] Fetching pull request changes...');
         const prChangesScript = path.join(scriptsDir, 'Get-AzureDevOpsPRChanges.ps1');
         const iterationDetailsOutput = path.join(workingDirectory, 'Iteration_Details.txt');
         
@@ -239,8 +276,44 @@ async function run(): Promise<void> {
             }
         }
 
-        // Step 4: Run Copilot CLI for code review
-        console.log('\n[Step 4/4] Running Copilot code review...');
+        // Step 4: Fetch linked work item details (optional)
+        if (includeWorkItems) {
+            console.log('\n[Step 4/5] Fetching linked work item details...');
+            const workItemIdsFile = path.join(workingDirectory, 'Work_Item_Ids.txt');
+
+            if (fs.existsSync(workItemIdsFile)) {
+                const workItemIds = fs.readFileSync(workItemIdsFile, 'utf8').trim();
+
+                if (workItemIds) {
+                    const workItemsScript = path.join(scriptsDir, 'Get-AzureDevOpsWorkItems.ps1');
+                    const workItemDetailsOutput = path.join(workingDirectory, 'Work_Item_Details.txt');
+
+                    try {
+                        await runPowerShellScript(workItemsScript, [
+                            `-Token "${azureDevOpsToken}"`,
+                            `-AuthType "${azureDevOpsAuthType}"`,
+                            `-CollectionUri "${resolvedCollectionUri}"`,
+                            `-Project "${project}"`,
+                            `-WorkItemIds "${workItemIds}"`,
+                            `-OutputFile "${workItemDetailsOutput}"`
+                        ]);
+                        console.log(`Work item details saved to: ${workItemDetailsOutput}`);
+                    } catch (err) {
+                        console.log('Warning: Failed to fetch work item details. Continuing without work item context.');
+                        console.log(`Error: ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                } else {
+                    console.log('No linked work item IDs found. Skipping work item detail fetch.');
+                }
+            } else {
+                console.log('No linked work items for this PR. Skipping work item detail fetch.');
+            }
+        } else {
+            console.log('\n[Step 4/5] Skipping work item details (disabled).');
+        }
+
+        // Step 5: Run CLI agent for code review
+        console.log(`\n[Step 5/5] Running ${agentName} code review...`);
         
         // Determine the prompt file to use
         let promptFilePath: string = '';
@@ -325,6 +398,19 @@ async function run(): Promise<void> {
             console.log('Using default prompt.');
         }
 
+        // When using Claude Code, replace the Copilot attribution tag in the prompt
+        if (useClaudeCode && promptFilePath) {
+            let promptContent = fs.readFileSync(promptFilePath, 'utf8');
+            if (promptContent.includes('Generated by GitHub Copilot')) {
+                promptContent = promptContent.replace(/Generated by GitHub Copilot/g, 'Generated by Claude Code');
+                // Always write to a separate temp file to avoid mutating the original prompt file
+                const modifiedPromptPath = path.join(workingDirectory, '_claude_prompt.txt');
+                fs.writeFileSync(modifiedPromptPath, promptContent, 'utf8');
+                promptFilePath = modifiedPromptPath;
+                console.log('Replaced attribution tag for Claude Code in prompt.');
+            }
+        }
+
         // Copy the Add-AzureDevOpsPRComment.ps1 and Add-AzureDevOpsPRComment.ps1 script to the working directory
         // so Copilot can find and use them for posting PR comments
         const addCommentScriptSource = path.join(scriptsDir, 'Add-AzureDevOpsPRComment.ps1');
@@ -344,15 +430,19 @@ async function run(): Promise<void> {
         fs.copyFileSync(deleteCommentScriptSource, deleteCommentScriptDest);
         console.log(`Copied Delete-CopilotComment.ps1 to: ${deleteCommentScriptDest}`);
         
-        // Run Copilot CLI with timeout
+        // Run CLI agent with timeout
         const timeoutMs = timeoutMinutes * 60 * 1000;
-        await runCopilotCli(promptFilePath, model, workingDirectory, timeoutMs);
+        if (useClaudeCode) {
+            await runClaudeCodeCli(promptFilePath, model, workingDirectory, timeoutMs, maxTurns, maxBudget);
+        } else {
+            await runCopilotCli(promptFilePath, model, workingDirectory, timeoutMs);
+        }
 
         console.log('\n' + '='.repeat(60));
-        console.log('Copilot Code Review completed successfully!');
+        console.log(`${agentName} Code Review completed successfully!`);
         console.log('='.repeat(60));
 
-        tl.setResult(tl.TaskResult.Succeeded, 'Copilot code review completed.');
+        tl.setResult(tl.TaskResult.Succeeded, `${agentName} code review completed.`);
     } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         tl.setResult(tl.TaskResult.Failed, `Task failed: ${errorMessage}`);
@@ -491,6 +581,164 @@ async function runCopilotCli(promptFilePath: string, model: string | undefined, 
         copilotProcess.on('error', (err) => {
             clearTimeout(timeoutId);
             reject(new Error(`Failed to run Copilot CLI: ${err.message}`));
+        });
+    });
+}
+
+async function checkClaudeCodeCli(): Promise<boolean> {
+    try {
+        const result = child_process.spawnSync('claude', ['--version'], {
+            encoding: 'utf8',
+            shell: true
+        });
+        return result.status === 0;
+    } catch {
+        return false;
+    }
+}
+
+async function installClaudeCodeCli(): Promise<void> {
+    return new Promise((resolve, reject) => {
+        console.log('Installing Claude Code CLI via npm...');
+        const installProcess = child_process.spawn(
+            'npm',
+            ['install', '-g', '@anthropic-ai/claude-code'],
+            {
+                shell: true,
+                stdio: 'inherit'
+            }
+        );
+
+        installProcess.on('close', (code: number | null) => {
+            if (code === 0) {
+                console.log('Claude Code CLI installed successfully.');
+                // Ensure npm global bin is on PATH for the current process
+                const npmBinResult = child_process.spawnSync('npm', ['bin', '-g'], {
+                    encoding: 'utf8',
+                    shell: true
+                });
+                if (npmBinResult.status === 0 && npmBinResult.stdout.trim()) {
+                    const npmGlobalBin = npmBinResult.stdout.trim();
+                    const pathSep = isWindows() ? ';' : ':';
+                    process.env['PATH'] = `${npmGlobalBin}${pathSep}${process.env['PATH']}`;
+                    console.log(`Added ${npmGlobalBin} to PATH.`);
+                }
+                resolve();
+            } else {
+                reject(new Error(`Failed to install Claude Code CLI. Exit code: ${code}`));
+            }
+        });
+
+        installProcess.on('error', (err: Error) => {
+            reject(new Error(`Failed to install Claude Code CLI: ${err.message}`));
+        });
+    });
+}
+
+async function runClaudeCodeCli(
+    promptFilePath: string,
+    model: string | undefined,
+    workingDirectory: string,
+    timeoutMs: number,
+    maxTurns: string | undefined,
+    maxBudget: string | undefined
+): Promise<void> {
+    return new Promise((resolve, reject) => {
+        // Build Claude Code CLI command for headless CI/CD operation
+        // Use stream-json output with PowerShell parsing for real-time log streaming
+        let claudeCmd = `claude -p "$prompt" --dangerously-skip-permissions`;
+        claudeCmd += ` --output-format stream-json --verbose --include-partial-messages`;
+        claudeCmd += ` --allowedTools "Bash" "Read" "Write" "Edit" "Glob" "Grep"`;
+        claudeCmd += ` --disallowedTools "Bash(git push *)"`;
+
+        if (model) {
+            claudeCmd += ` --model ${model}`;
+        }
+        if (maxTurns) {
+            claudeCmd += ` --max-turns ${maxTurns}`;
+        }
+        if (maxBudget) {
+            claudeCmd += ` --max-budget-usd ${maxBudget}`;
+        }
+
+        // PowerShell pipeline: stream JSON from Claude Code, extract text deltas and tool calls in real time.
+        // Tool use events arrive as: content_block_start (tool name) → input_json_delta fragments → content_block_stop.
+        // We accumulate input fragments with $script:-scoped state and print the tool name + input on block stop.
+        const streamParser = [
+            `$script:toolNames = @{};`,
+            `$script:toolInputs = @{};`,
+            `${claudeCmd} | ForEach-Object {`,
+            `  try {`,
+            `    $ev = ($_ | ConvertFrom-Json -ErrorAction Stop);`,
+            `    if ($ev.type -ne 'stream_event') { return }`,
+            `    $se = $ev.event;`,
+            `    if ($se.type -eq 'content_block_delta' -and $se.delta.type -eq 'text_delta') {`,
+            `      Write-Host $se.delta.text`,
+            `    }`,
+            `    elseif ($se.type -eq 'content_block_start' -and $se.content_block.type -eq 'tool_use') {`,
+            `      $idx = [string]$se.index;`,
+            `      $script:toolNames[$idx] = $se.content_block.name;`,
+            `      $script:toolInputs[$idx] = ''`,
+            `    }`,
+            `    elseif ($se.type -eq 'content_block_delta' -and $se.delta.type -eq 'input_json_delta') {`,
+            `      $idx = [string]$se.index;`,
+            `      $script:toolInputs[$idx] += $se.delta.partial_json`,
+            `    }`,
+            `    elseif ($se.type -eq 'content_block_stop' -and $script:toolNames.ContainsKey([string]$se.index)) {`,
+            `      $idx = [string]$se.index;`,
+            `      $name = $script:toolNames[$idx];`,
+            `      $raw = $script:toolInputs[$idx];`,
+            `      try { $inp = ($raw | ConvertFrom-Json -ErrorAction Stop); $display = ($inp | ConvertTo-Json -Compress) } catch { $display = $raw };`,
+            `      Write-Host '';`,
+            `      Write-Host "    [$name] $display";`,
+            `      $script:toolNames.Remove($idx);`,
+            `      $script:toolInputs.Remove($idx)`,
+            `    }`,
+            `  } catch { Write-Host $_ }`,
+            `};`,
+            `Write-Host '';`,
+            `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`
+        ].join(' ');
+
+        const printPrompt = `Write-Host ========== START PROMPT ==========; Write-Host $prompt; Write-Host ========== END PROMPT ==========;`;
+        const envRefresh = isWindows()
+            ? `$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User");`
+            : '';
+        const psCommand = `${envRefresh} $prompt = Get-Content -Path '${promptFilePath}' -Raw; ${printPrompt} ${streamParser}`;
+        console.log(`Running PowerShell: ${psCommand}`);
+
+        const envVars = { ...process.env };
+
+        const claudeProcess = child_process.spawn(
+            'pwsh',
+            ['-NoProfile', '-Command', psCommand],
+            {
+                shell: false,
+                stdio: 'inherit',
+                cwd: workingDirectory,
+                env: envVars
+            }
+        );
+
+        // Set up timeout
+        const timeoutId = setTimeout(() => {
+            console.log(`\nTimeout reached (${timeoutMs / 60000} minutes). Terminating Claude Code process...`);
+            claudeProcess.kill('SIGTERM');
+            reject(new Error(`Claude Code review timed out after ${timeoutMs / 60000} minutes`));
+        }, timeoutMs);
+
+        claudeProcess.on('close', (code) => {
+            clearTimeout(timeoutId);
+            if (code === 0) {
+                resolve();
+            } else {
+                reject(new Error(`Claude Code CLI exited with code: ${code}`));
+            }
+        });
+
+        claudeProcess.on('error', (err) => {
+            clearTimeout(timeoutId);
+            reject(new Error(`Failed to run Claude Code CLI: ${err.message}`));
         });
     });
 }

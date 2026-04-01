@@ -10,17 +10,54 @@
     "version": {
         "Major": 0,
         "Minor": 3,
-        "Patch": 3
+        "Patch": 8
     },
     "instanceNameFormat": "Copilot Code Review (Dev)",
     "minimumAgentVersion": "2.182.1",
     "inputs": [
         {
+            "name": "useClaudeCode",
+            "type": "boolean",
+            "label": "Use Claude Code CLI",
+            "required": false,
+            "defaultValue": false,
+            "helpMarkDown": "When enabled, uses Claude Code CLI (Anthropic) instead of GitHub Copilot CLI for the code review. Requires an Anthropic API key."
+        },
+        {
             "name": "githubPat",
             "type": "string",
             "label": "GitHub PAT",
-            "required": true,
-            "helpMarkDown": "Personal Access Token for GitHub with Copilot access. This token is used to authenticate with the GitHub Copilot CLI."
+            "required": false,
+            "isSecret": true,
+            "helpMarkDown": "Personal Access Token for GitHub with Copilot access. Required when using the GitHub Copilot CLI (default). Not needed when 'Use Claude Code CLI' is enabled.",
+            "visibleRule": "useClaudeCode != true"
+        },
+        {
+            "name": "anthropicApiKey",
+            "type": "string",
+            "label": "Anthropic API Key",
+            "required": false,
+            "isSecret": true,
+            "helpMarkDown": "API key for Anthropic's Claude Code CLI. Required when 'Use Claude Code CLI' is enabled.",
+            "visibleRule": "useClaudeCode = true"
+        },
+        {
+            "name": "maxTurns",
+            "type": "string",
+            "label": "Max Turns (Claude Code)",
+            "required": false,
+            "defaultValue": "",
+            "helpMarkDown": "Optional. Maximum number of agentic turns for Claude Code CLI. Limits how many tool-use iterations the agent can perform.",
+            "visibleRule": "useClaudeCode = true"
+        },
+        {
+            "name": "maxBudget",
+            "type": "string",
+            "label": "Max Budget USD (Claude Code)",
+            "required": false,
+            "defaultValue": "",
+            "helpMarkDown": "Optional. Maximum cost in USD for the Claude Code CLI session. The session will stop if this budget is reached.",
+            "visibleRule": "useClaudeCode = true"
         },
         {
             "name": "azureDevOpsPat",
@@ -140,6 +177,14 @@
             "required": false,
             "defaultValue": "",
             "helpMarkDown": "Optional. A comma-separated list of email addresses. If specified, the task will only run code reviews for PRs authored by users with matching email addresses. Uses $(Build.RequestedForEmail) for comparison."
+        },
+        {
+            "name": "includeWorkItems",
+            "type": "boolean",
+            "label": "Include Work Item Details",
+            "required": false,
+            "defaultValue": true,
+            "helpMarkDown": "When enabled, fetches full details (title, description, acceptance criteria, repro steps) for work items linked to the pull request and includes them as context for the Copilot review. Disable to reduce API calls and context window usage."
         }
     ],
     "execution": {
