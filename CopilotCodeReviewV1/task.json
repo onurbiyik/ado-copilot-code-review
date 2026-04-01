@@ -28,6 +28,7 @@
             "type": "string",
             "label": "GitHub PAT",
             "required": false,
+            "isSecret": true,
             "helpMarkDown": "Personal Access Token for GitHub with Copilot access. Required when using the GitHub Copilot CLI (default). Not needed when 'Use Claude Code CLI' is enabled.",
             "visibleRule": "useClaudeCode != true"
         },
@@ -36,6 +37,7 @@
             "type": "string",
             "label": "Anthropic API Key",
             "required": false,
+            "isSecret": true,
             "helpMarkDown": "API key for Anthropic's Claude Code CLI. Required when 'Use Claude Code CLI' is enabled.",
             "visibleRule": "useClaudeCode = true"
         },

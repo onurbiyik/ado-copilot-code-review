@@ -224,12 +224,12 @@ As of April 2026, here are the model options supported by the Claude Code CLI:
 | Alias | Description |
 | --- | ---- |
 | `default` | Recommended model setting, depending on your account type |
-| `sonnet ` | Uses the latest Sonnet model (currently Sonnet 4.6) for daily coding tasks |
+| `sonnet` | Uses the latest Sonnet model (currently Sonnet 4.6) for daily coding tasks |
 | `opus` | Uses the latest Opus model (currently Opus 4.6) for complex reasoning tasks |
 | `haiku` | Uses the fast and efficient Haiku model for simple tasks |
 | `sonnet[1m]` | Uses Sonnet with a 1 million token context window for long sessions |
 | `opus[1m]` | Uses Opus with a 1 million token context window for long sessions |
-| `opusplan` | 	Special mode that uses `opus` during plan mode, then switches to `sonnet` for execution |
+| `opusplan` | Special mode that uses `opus` during plan mode, then switches to `sonnet` for execution |
 
 Aliases always point to the latest version. To pin to a specific version, use the full model name (for example, `claude-opus-4-6`).
 
