@@ -662,8 +662,44 @@ async function runClaudeCodeCli(
             claudeCmd += ` --max-budget-usd ${maxBudget}`;
         }
 
-        // PowerShell pipeline: stream JSON from Claude Code and extract text deltas in real time
-        const streamParser = `${claudeCmd} | ForEach-Object { try { $ev = $_ | ConvertFrom-Json -ErrorAction Stop; if ($ev.type -eq 'stream_event' -and $ev.event.delta.type -eq 'text_delta') { Write-Host $ev.event.delta.text } } catch { Write-Host $_ } }; Write-Host ''; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`;
+        // PowerShell pipeline: stream JSON from Claude Code, extract text deltas and tool calls in real time.
+        // Tool use events arrive as: content_block_start (tool name) → input_json_delta fragments → content_block_stop.
+        // We accumulate input fragments with $script:-scoped state and print the tool name + input on block stop.
+        const streamParser = [
+            `$script:toolNames = @{};`,
+            `$script:toolInputs = @{};`,
+            `${claudeCmd} | ForEach-Object {`,
+            `  try {`,
+            `    $ev = ($_ | ConvertFrom-Json -ErrorAction Stop);`,
+            `    if ($ev.type -ne 'stream_event') { return }`,
+            `    $se = $ev.event;`,
+            `    if ($se.type -eq 'content_block_delta' -and $se.delta.type -eq 'text_delta') {`,
+            `      Write-Host $se.delta.text`,
+            `    }`,
+            `    elseif ($se.type -eq 'content_block_start' -and $se.content_block.type -eq 'tool_use') {`,
+            `      $idx = [string]$se.index;`,
+            `      $script:toolNames[$idx] = $se.content_block.name;`,
+            `      $script:toolInputs[$idx] = ''`,
+            `    }`,
+            `    elseif ($se.type -eq 'content_block_delta' -and $se.delta.type -eq 'input_json_delta') {`,
+            `      $idx = [string]$se.index;`,
+            `      $script:toolInputs[$idx] += $se.delta.partial_json`,
+            `    }`,
+            `    elseif ($se.type -eq 'content_block_stop' -and $script:toolNames.ContainsKey([string]$se.index)) {`,
+            `      $idx = [string]$se.index;`,
+            `      $name = $script:toolNames[$idx];`,
+            `      $raw = $script:toolInputs[$idx];`,
+            `      try { $inp = ($raw | ConvertFrom-Json -ErrorAction Stop); $display = ($inp | ConvertTo-Json -Compress) } catch { $display = $raw };`,
+            `      Write-Host '';`,
+            `      Write-Host "    [$name] $display";`,
+            `      $script:toolNames.Remove($idx);`,
+            `      $script:toolInputs.Remove($idx)`,
+            `    }`,
+            `  } catch { Write-Host $_ }`,
+            `};`,
+            `Write-Host '';`,
+            `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`
+        ].join(' ');
 
         const printPrompt = `Write-Host ========== START PROMPT ==========; Write-Host $prompt; Write-Host ========== END PROMPT ==========;`;
         const envRefresh = isWindows()
